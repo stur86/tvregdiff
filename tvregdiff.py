@@ -128,6 +128,7 @@
 
 import sys
 
+import logging
 try:
     import numpy as np
     import scipy as sp
@@ -143,7 +144,8 @@ try:
     import matplotlib.pyplot as plt
 except ImportError:
     _has_matplotlib = False
-    print("Matplotlib is not installed - plotting functionality disabled")
+    logging.warning(
+        "Matplotlib is not installed - plotting functionality disabled")
 
 # Utility function.
 
@@ -159,7 +161,7 @@ def TVRegDiff(data, itern, alph, u0=None, scale='small', ep=1e-6, dx=None,
     # Make sure we have a column vector
     data = np.array(data)
     if (len(data.shape) != 1):
-        print("Error - data is not a column vector")
+        logging.error("Error - data is not a column vector")
         return
     # Get the data size.
     n = len(data)
@@ -219,16 +221,18 @@ def TVRegDiff(data, itern, alph, u0=None, scale='small', ep=1e-6, dx=None,
                 [s, info_i] = sparse.linalg.cg(
                     linop, g, x0=None, tol=tol, maxiter=maxit, callback=None,
                     M=P)
-                print('iteration {0:4d}: relative change = {1:.3e}, '
-                      'gradient norm = {2:.3e}\n'.format(ii,
-                                                         np.linalg.norm(
-                                                             s[0]) /
-                                                         np.linalg.norm(u),
-                                                         np.linalg.norm(g)))
+                logging.info('iteration {0:4d}: relative change = {1:.3e}, '
+                             'gradient norm = {2:.3e}\n'.format(ii,
+                                                                np.linalg.norm(
+                                                                    s[0]) /
+                                                                np.linalg.norm(
+                                                                    u),
+                                                                np.linalg.norm(g)))
                 if (info_i > 0):
-                    print("WARNING - convergence to tolerance not achieved!")
+                    logging.warning(
+                        "WARNING - convergence to tolerance not achieved!")
                 elif (info_i < 0):
-                    print("WARNING - illegal input or breakdown")
+                    logging.warning("WARNING - illegal input or breakdown")
             else:
                 [s, info_i] = sparse.linalg.cg(
                     linop, g, x0=None, tol=tol, maxiter=maxit, callback=None,
@@ -289,15 +293,17 @@ def TVRegDiff(data, itern, alph, u0=None, scale='small', ep=1e-6, dx=None,
                 [s, info_i] = sparse.linalg.cg(
                     linop, -g, x0=None, tol=tol, maxiter=maxit, callback=None,
                     M=np.dot(R.transpose(), R))
-                print('iteration {0:4d}: relative change = {1:.3e}, '
-                      'gradient norm = {2:.3e}\n'.format(ii,
-                                                         np.linalg.norm(s[0]) /
-                                                         np.linalg.norm(u),
-                                                         np.linalg.norm(g)))
+                logging.info('iteration {0:4d}: relative change = {1:.3e}, '
+                             'gradient norm = {2:.3e}\n'.format(ii,
+                                                                np.linalg.norm(s[0]) /
+                                                                np.linalg.norm(
+                                                                    u),
+                                                                np.linalg.norm(g)))
                 if (info_i > 0):
-                    print("WARNING - convergence to tolerance not achieved!")
+                    logging.warning(
+                        "WARNING - convergence to tolerance not achieved!")
                 elif (info_i < 0):
-                    print("WARNING - illegal input or breakdown")
+                    logging.warning("WARNING - illegal input or breakdown")
 
             else:
                 [s, info_i] = sparse.linalg.cg(
@@ -319,22 +325,49 @@ def TVRegDiff(data, itern, alph, u0=None, scale='small', ep=1e-6, dx=None,
 
 if __name__ == "__main__":
 
-    dx = 0.05
-    x0 = np.arange(0, 2.0*np.pi, dx)
+    import argparse as ap
 
-    testf = np.sin(x0)
+    parser = ap.ArgumentParser(description='Compute the derivative of a '
+                               'noisy function with the TVRegDiff method')
+    parser.add_argument('dat_file', type=str,
+                        help='Tabulated ASCII file with the data'
+                        ' to differentiate')
+    parser.add_argument('-iter', type=int, default=10,
+                        help='Number of iterations')
+    parser.add_argument('-colx', type=int, default=0,
+                        help='Index of the column containing the X data '
+                        '(must be regularly spaced)')
+    parser.add_argument('-coly', type=int, default=1,
+                        help='Index of the column containing the Y data')
+    parser.add_argument('-a', type=float, default=5e-2,
+                        help='Regularization parameter')
+    parser.add_argument('-ep', type=float, default=1e-5,
+                        help='Parameter for avoiding division by zero')
+    parser.add_argument('-lscale', action='store_true', default=False,
+                        help='Use Large instead of Small scale algorithm')
+    parser.add_argument('-plot', action='store_true', default=False,
+                        help='Plot result with Matplotlib at the end')
 
-    testf = testf + np.random.normal(0.0, 0.04, x0.shape)
+    args = parser.parse_args()
 
-    deriv_sm = TVRegDiff(testf, 1, 5e-2, dx=dx,
-                         ep=1e-1, scale='small', plotflag=0)
-    deriv_lrg = TVRegDiff(testf, 100, 1e-1, dx=dx,
-                          ep=1e-2, scale='large', plotflag=0)
+    data = np.loadtxt(args.dat_file)
+    X = data[:, args.colx]
+    Y = data[:, args.coly]
+
+    dX = X[1]-X[0]
+
+    dYdX = TVRegDiff(Y, args.iter, args.a, dx=dX, ep=args.ep,
+                     scale=('large' if args.lscale else 'small'), plotflag=0)
+
+    for x, y in zip(X, dYdX):
+        print(x, y)
 
     if (_has_matplotlib):
-        plt.plot(np.cos(x0), label='Analytical', c=(0,0,0))
-        plt.plot(np.gradient(testf, dx), label='numpy.gradient')
-        plt.plot(deriv_sm, label='TVRegDiff (small)')
-        plt.plot(deriv_lrg, label='TVRegDiff (large)')
+
+        Xext = np.concatenate([X-dX/2.0, [X[-1]+dX/2]])
+
+        plt.plot(X, Y, label='f(x)', c=(0.2,0.2,0.2), lw=0.5)
+        plt.plot(X, np.gradient(Y, dX), label='df/dx (numpy)', c=(0, 0.3, 0.8), lw=1)
+        plt.plot(Xext, dYdX, label='df/dx (TVRegDiff)', c=(0.8, 0.3, 0.0), lw=1)
         plt.legend()
         plt.show()
