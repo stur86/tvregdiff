@@ -6,13 +6,13 @@ Requires Numpy and Scipy installed. Matplotlib optional for plotting.
 Usage: 
 
 ```python
-u = TVRegDiff( data, iter, alph, u0, scale, ep, dx, plotflag, diagflag );
+u = TVRegDiff(data, iter, alph, u0, scale, ep, dx, plotflag, diagflag)
 ```
 
 Test:
 
 ```bash
-python tvregdiff.py
+python tvregdiff.py test_data.dat
 ```
 
 Rick Chartrand (rickc@lanl.gov), Apr. 10, 2011
