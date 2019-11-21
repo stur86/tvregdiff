@@ -104,7 +104,7 @@ def log_iteration(ii, s0, u, g):
 
 
 def TVRegDiff(data, itern, alph, u0=None, scale='small', ep=1e-6, dx=None,
-              plotflag=_has_matplotlib, diagflag=1):
+              plotflag=_has_matplotlib, diagflag=True):
     """
     Estimate derivatives from noisy data based using the Total 
     Variation Regularized Numerical Differentiation (TVDiff) 
@@ -115,7 +115,7 @@ def TVRegDiff(data, itern, alph, u0=None, scale='small', ep=1e-6, dx=None,
     data : ndarray
         One-dimensional array containing series data to be
         differentiated.
-    iter : int
+    itern : int
         Number of iterations to run the main loop.  A stopping
         condition based on the norm of the gradient vector g
         below would be an easy modification.  No default value.
@@ -228,7 +228,7 @@ def TVRegDiff(data, itern, alph, u0=None, scale='small', ep=1e-6, dx=None,
             if diagflag:
                 [s, info_i] = sparse.linalg.cg(
                     linop, g, x0=None, tol=tol, maxiter=maxit, callback=None,
-                    M=P)
+                    M=P, atol='legacy')
                 log_iteration(ii, s[0], u, g)
                 if (info_i > 0):
                     logging.warning(
@@ -238,7 +238,7 @@ def TVRegDiff(data, itern, alph, u0=None, scale='small', ep=1e-6, dx=None,
             else:
                 [s, info_i] = sparse.linalg.cg(
                     linop, g, x0=None, tol=tol, maxiter=maxit, callback=None,
-                    M=P)
+                    M=P, atol='legacy')
             # Update solution.
             u = u - s
             # Display plot.
@@ -294,7 +294,7 @@ def TVRegDiff(data, itern, alph, u0=None, scale='small', ep=1e-6, dx=None,
             if diagflag:
                 [s, info_i] = sparse.linalg.cg(
                     linop, -g, x0=None, tol=tol, maxiter=maxit, callback=None,
-                    M=np.dot(R.transpose(), R))
+                    M=np.dot(R.transpose(), R), atol='legacy')
                 log_iteration(ii, s[0], u, g)
                 if (info_i > 0):
                     logging.warning(
@@ -305,7 +305,7 @@ def TVRegDiff(data, itern, alph, u0=None, scale='small', ep=1e-6, dx=None,
             else:
                 [s, info_i] = sparse.linalg.cg(
                     linop, -g, x0=None, tol=tol, maxiter=maxit, callback=None,
-                    M = np.dot(R.transpose(), R))
+                    M = np.dot(R.transpose(), R), atol='legacy')
             # Update current solution
             u = u + s
             # Display plot
