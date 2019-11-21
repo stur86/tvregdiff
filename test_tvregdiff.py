@@ -22,6 +22,8 @@ class TVDiffTest(unittest.TestCase):
         "Numerical differentiation of noisy, nonsmooth data," ISRN
         Applied Mathematics, Vol. 2011, Article ID 164564, 2011.
         """
+
+        # Load data (data is from smalldemodata.mat)
         noisy_abs_data = np.loadtxt('smalldemodata.csv')
         self.assertEqual(noisy_abs_data.shape, (100,))
 
