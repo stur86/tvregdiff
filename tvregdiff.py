@@ -104,7 +104,8 @@ def log_iteration(ii, s0, u, g):
 
 
 def TVRegDiff(data, itern, alph, u0=None, scale='small', ep=1e-6, dx=None,
-              plotflag=_has_matplotlib, diagflag=True):
+              plotflag=_has_matplotlib, diagflag=True, precondflag=True,
+              diffkernel='abs', cgtol=1e-4, cgmaxit=100):
     """
     Estimate derivatives from noisy data based using the Total 
     Variation Regularized Numerical Differentiation (TVDiff) 
@@ -159,6 +160,26 @@ def TVRegDiff(data, itern, alph, u0=None, scale='small', ep=1e-6, dx=None,
         preconditioning problems.  When tolerance is not met,
         an early iterate being best is more worrying than a
         large relative residual.
+    precondflag: bool, optional
+        Flag whether to use a preconditioner for conjugate gradient solution.
+        Default is True. While in principle it should speed things up, 
+        sometimes the preconditioner can cause convergence problems instead,
+        and should be turned off. Note that this mostly makes sense for 'small'
+        scale problems; for 'large' ones, the improved preconditioner is one
+        of the main features of the algorithms and turning it off defeats the
+        point.
+    diffkernel: str, optional
+        Kernel to use in the integral to smooth the derivative. By default it's
+        the absolute value, |u'| (value: "abs"). However, it can be changed to
+        being the square, (u')^2 (value: "sq"). The latter produces smoother
+        derivatives, whereas the absolute values tends to make them more blocky.
+        Default is abs.
+    cgtol: float, optional
+        Tolerance to use in conjugate gradient optimisation. Default is 1e-4.
+    cgmaxit: int, optional
+        Maximum number of iterations to use in conjugate gradient optimisation. 
+        Default is 100
+
 
     Returns
     -------
@@ -181,26 +202,28 @@ def TVRegDiff(data, itern, alph, u0=None, scale='small', ep=1e-6, dx=None,
     # Different methods for small- and large-scale problems.
     if (scale.lower() == 'small'):
 
-        # Construct differentiation matrix.
-        c = np.ones(n + 1) / dx
-        D = sparse.spdiags([-c, c], [0, 1], n, n + 1)
+        # Differentiation operator
+        d0 = -np.ones(n)/dx
+        du = np.ones(n-1)/dx
+        dl = np.zeros(n-1)
+        dl[-1] = d0[-1]
+        d0[-1] *= -1
 
+        D = sparse.diags([dl, d0, du], [-1, 0, 1])
         DT = D.transpose()
 
-        # Construct antidifferentiation operator and its adjoint.
-        def A(x): return (np.cumsum(x) - 0.5 * (x + x[0]))[1:] * dx
+        # Antidifferentiation and its adjoint
+        def A(x): return (np.cumsum(x) - 0.5 * (x + x[0])) * dx
 
-        def AT(w): return (sum(w) * np.ones(n + 1) -
-                           np.transpose(np.concatenate(([sum(w) / 2.0],
-                                                        np.cumsum(w) -
-                                                        w / 2.0)))) * dx
+        def AT(x): return np.concatenate([[sum(x[1:])/2.0],
+                                          (sum(x)-np.cumsum(x)+0.5*x)[1:]])*dx
 
         # Default initialization is naive derivative
 
         if u0 is None:
-            u0 = np.concatenate(([0], np.diff(data), [0]))
+            u0 = D*data
 
-        u = u0
+        u = u0.copy()
         # Since Au( 0 ) = 0, we need to adjust.
         ofst = data[0]
         # Precompute.
@@ -208,37 +231,41 @@ def TVRegDiff(data, itern, alph, u0=None, scale='small', ep=1e-6, dx=None,
 
         # Main loop.
         for ii in range(1, itern+1):
-            # Diagonal matrix of weights, for linearizing E-L equation.
-            Q = sparse.spdiags(1. / (np.sqrt((D * u)**2 + ep)), 0, n, n)
-            # Linearized diffusion matrix, also approximation of Hessian.
-            L = dx * DT * Q * D
+            if diffkernel == 'abs':
+                # Diagonal matrix of weights, for linearizing E-L equation.
+                Q = sparse.spdiags(1. / (np.sqrt((D * u)**2 + ep)), 0, n, n)
+                # Linearized diffusion matrix, also approximation of Hessian.
+                L = dx * DT * Q * D
+            elif diffkernel == 'sq':
+                L = dx * DT * D
+            else:
+                raise ValueError('Invalid diffkernel value')
 
             # Gradient of functional.
             g = AT(A(u)) + ATb + alph * L * u
 
             # Prepare to solve linear equation.
-            tol = 1e-4
-            maxit = 100
-            # Simple preconditioner.
-            P = alph * sparse.spdiags(L.diagonal() + 1, 0, n + 1, n + 1)
+            if precondflag:
+                # Simple preconditioner.
+                P = alph * sparse.spdiags(L.diagonal() + 1, 0, n, n)
+            else:
+                P = None
 
             def linop(v): return (alph * L * v + AT(A(v)))
-            linop = splin.LinearOperator((n + 1, n + 1), linop)
+            linop = splin.LinearOperator((n, n), linop)
+
+            s, info_i = sparse.linalg.cg(
+                linop, g, x0=None, tol=cgtol, maxiter=cgmaxit,
+                callback=None, M=P, atol='legacy')
 
             if diagflag:
-                [s, info_i] = sparse.linalg.cg(
-                    linop, g, x0=None, tol=tol, maxiter=maxit, callback=None,
-                    M=P, atol='legacy')
                 log_iteration(ii, s[0], u, g)
                 if (info_i > 0):
                     logging.warning(
                         "WARNING - convergence to tolerance not achieved!")
                 elif (info_i < 0):
                     logging.warning("WARNING - illegal input or breakdown")
-            else:
-                [s, info_i] = sparse.linalg.cg(
-                    linop, g, x0=None, tol=tol, maxiter=maxit, callback=None,
-                    M=P, atol='legacy')
+
             # Update solution.
             u = u - s
             # Display plot.
@@ -272,29 +299,38 @@ def TVRegDiff(data, itern, alph, u0=None, scale='small', ep=1e-6, dx=None,
 
         # Main loop.
         for ii in range(1, itern + 1):
-            # Diagonal matrix of weights, for linearizing E-L equation.
-            Q = sparse.spdiags(1. / np.sqrt((D*u)**2.0 + ep), 0, n, n)
-            # Linearized diffusion matrix, also approximation of Hessian.
-            L = DT * Q * D
+
+            if diffkernel == 'abs':
+                # Diagonal matrix of weights, for linearizing E-L equation.
+                Q = sparse.spdiags(1. / (np.sqrt((D * u)**2 + ep)), 0, n, n)
+                # Linearized diffusion matrix, also approximation of Hessian.
+                L = DT * Q * D
+            elif diffkernel == 'sq':
+                L = DT * D
+            else:
+                raise ValueError('Invalid diffkernel value')
+
             # Gradient of functional.
             g = AT(A(u)) - ATd
             g = g + alph * L * u
             # Build preconditioner.
-            c = np.cumsum(range(n, 0, -1))
-            B = alph * L + sparse.spdiags(c[::-1], 0, n, n)
-            # droptol = 1.0e-2
-            R = sparse.dia_matrix(np.linalg.cholesky(B.todense()))
+            if precondflag:
+                c = np.cumsum(range(n, 0, -1))
+                B = alph * L + sparse.spdiags(c[::-1], 0, n, n)
+                # droptol = 1.0e-2
+                R = sparse.dia_matrix(np.linalg.cholesky(B.todense()))
+                P = np.dot(R.transpose(), R)
+            else:
+                P = None
             # Prepare to solve linear equation.
-            tol = 1.0e-4
-            maxit = 100
 
             def linop(v): return (alph * L * v + AT(A(v)))
             linop = splin.LinearOperator((n, n), linop)
 
+            s, info_i = sparse.linalg.cg(
+                linop, -g, x0=None, tol=cgtol, maxiter=cgmaxit, callback=None,
+                M=P, atol='legacy')
             if diagflag:
-                [s, info_i] = sparse.linalg.cg(
-                    linop, -g, x0=None, tol=tol, maxiter=maxit, callback=None,
-                    M=np.dot(R.transpose(), R), atol='legacy')
                 log_iteration(ii, s[0], u, g)
                 if (info_i > 0):
                     logging.warning(
@@ -302,10 +338,6 @@ def TVRegDiff(data, itern, alph, u0=None, scale='small', ep=1e-6, dx=None,
                 elif (info_i < 0):
                     logging.warning("WARNING - illegal input or breakdown")
 
-            else:
-                [s, info_i] = sparse.linalg.cg(
-                    linop, -g, x0=None, tol=tol, maxiter=maxit, callback=None,
-                    M = np.dot(R.transpose(), R), atol='legacy')
             # Update current solution
             u = u + s
             # Display plot
@@ -343,6 +375,11 @@ if __name__ == "__main__":
                         help='Use Large instead of Small scale algorithm')
     parser.add_argument('-plot', action='store_true', default=False,
                         help='Plot result with Matplotlib at the end')
+    parser.add_argument('-sq', action='store_true', default=False,
+                        help='Use square instead of abs kernel for the'
+                        ' functional')
+    parser.add_argument('-nop', action='store_true', default=False,
+                        help='Do not use preconditioner')
 
     args = parser.parse_args()
 
@@ -353,17 +390,16 @@ if __name__ == "__main__":
     dX = X[1] - X[0]
 
     dYdX = TVRegDiff(Y, args.iter, args.a, dx=dX, ep=args.ep,
-                     scale=('large' if args.lscale else 'small'), plotflag=False)
-
-    for x, y in zip(X, dYdX):
-        print(x, y)
+                     scale=('large' if args.lscale else 'small'),
+                     plotflag=False, precondflag=(not args.nop),
+                     diffkernel=('sq' if args.sq else 'abs'))
 
     if (_has_matplotlib):
 
-        Xext = np.concatenate([X - dX/2.0, [X[-1] + dX/2]])
-
         plt.plot(X, Y, label='f(x)', c=(0.2, 0.2, 0.2), lw=0.5)
-        plt.plot(X, np.gradient(Y, dX), label='df/dx (numpy)', c=(0, 0.3, 0.8), lw=1)
-        plt.plot(Xext, dYdX, label='df/dx (TVRegDiff)', c=(0.8, 0.3, 0.0), lw=1)
+        plt.plot(X, np.gradient(Y, dX),
+                 label='df/dx (numpy)', c=(0, 0.3, 0.8), lw=1)
+        plt.plot(X, dYdX, label='df/dx (TVRegDiff)',
+                 c=(0.8, 0.3, 0.0), lw=1)
         plt.legend()
         plt.show()

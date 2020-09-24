@@ -10,44 +10,103 @@ import unittest
 import numpy as np
 from numpy.testing import assert_allclose
 from tvregdiff import TVRegDiff
+try:
+    import matplotlib.pyplot as plt
+except ImportError:
+    plt = False
+
+# Functions to test on
+functions = {
+    'abs': [np.abs, np.sign],
+    'sigmoid': [lambda x: np.exp(x)/(1+np.exp(x)),
+                lambda x: np.exp(x)/(1+np.exp(x))-np.exp(2*x)/(1+np.exp(x))**2]
+}
+
+
+def rms(x):
+    return np.average(x**2)**0.5
 
 
 class TVDiffTest(unittest.TestCase):
 
     def setUp(self):
         self.data_dir = 'test_data'
+        self.longMessage = True
 
-    def test_case_small(self):
-        """Small-scale example from paper Rick Chartrand,
-        "Numerical differentiation of noisy, nonsmooth data," ISRN
-        Applied Mathematics, Vol. 2011, Article ID 164564, 2011.
-        """
+    def test_small(self):
 
-        # Load data (data is from smalldemodata.mat)
-        noisy_abs_data = np.loadtxt('smalldemodata.csv')
-        self.assertEqual(noisy_abs_data.shape, (100,))
+        n = 50
+        x = np.linspace(-5, 5, n)
+        dx = x[1]-x[0]
 
-        # Test with one iteration
-        n_iters = 1
-        alph = 0.2
-        scale = 'small'
-        ep = 1e-6
-        dx =  0.01
-        u = TVRegDiff(noisy_abs_data, n_iters, alph, u0=None, scale=scale, 
-                      ep=ep, dx=dx, plotflag=False, diagflag=True)
-        self.assertEqual(u.shape, (101,))
-        filepath = os.path.join(self.data_dir, 'smalldemo_u1.csv')
-        u_test = np.loadtxt(filepath)
-        assert_allclose(u, u_test)
+        for fname, (f, df) in functions.items():
 
-        # Test with 500 iterations
-        n_iters = 500
-        u = TVRegDiff(noisy_abs_data, n_iters, alph, u0=None, scale=scale, 
-                      ep=ep, dx=dx, plotflag=False, diagflag=True)
-        self.assertEqual(u.shape, (101,))
-        filepath = os.path.join(self.data_dir, 'smalldemo_u.csv')
-        u_test = np.loadtxt(filepath)
-        assert_allclose(u, u_test)
+            data = f(x) + (np.random.random(n)-0.5)*0.05
+            targ = df(x)
+
+            u1a = TVRegDiff(data, 1, 0.2, dx=dx, plotflag=False,
+                            precondflag=False)
+            u1s = TVRegDiff(data, 1, 0.2, dx=dx, plotflag=False,
+                            diffkernel='sq')
+
+            # Loose tolerance for this
+            self.assertLess(rms(u1a-targ), 0.3,
+                            '[function: {0}]'.format(fname))
+            self.assertLess(rms(u1s-targ), 0.3,
+                            '[function: {0}]'.format(fname))
+
+            # Tigher for more iterations
+            u10a = TVRegDiff(data, 10, 0.2, dx=dx, plotflag=False,
+                             precondflag=False)
+
+            self.assertLess(rms(u10a-targ), 0.2,
+                            '[function: {0}]'.format(fname))
+
+            if plt:
+                plt.title('scale = small')
+                plt.plot(x, targ)
+                plt.plot(x, u1a, label='u1a')
+                plt.plot(x, u1s, label='u1s')
+                plt.plot(x, u10a, label='u10a')
+                plt.legend()
+                plt.show()
+
+    def test_large(self):
+
+        n = 1000
+        x = np.linspace(-5, 5, n)
+        dx = x[1]-x[0]
+
+        for fname, (f, df) in functions.items():
+
+            data = f(x) + (np.random.random(n)-0.5)*0.05
+            targ = df(x)
+
+            u1a = TVRegDiff(data, 1, 0.2, dx=dx, plotflag=False,
+                            scale='large')
+            u1s = TVRegDiff(data, 1, 0.2, dx=dx, plotflag=False,
+                            diffkernel='sq', scale='large')
+
+            self.assertLess(rms(u1a-targ), 0.3,
+                            '[function: {0}]'.format(fname))
+            self.assertLess(rms(u1s-targ), 0.3,
+                            '[function: {0}]'.format(fname))
+
+            # Tigher for more iterations
+            u10a = TVRegDiff(data, 10, 0.2, dx=dx, plotflag=False,
+                             scale='large')
+
+            self.assertLess(rms(u10a-targ), 0.2,
+                            '[function: {0}]'.format(fname))
+
+            if plt:
+                plt.title('scale = large')
+                plt.plot(x, targ)
+                plt.plot(x, u1a, label='u1a')
+                plt.plot(x, u1s, label='u1s')
+                plt.plot(x, u10a, label='u10a')
+                plt.legend()
+                plt.show()
 
 
 if __name__ == '__main__':
